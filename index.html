@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Unidad K-7</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Chakra+Petch:wght@500;700&display=swap">
+<style>
+:root{
+  --bg:#07090a; --panel:#0e1213; --line:#253033; --fg:#d9e4e3; --dim:#7f8f8e; --signal:#9fe7d9; --warn:#e7b65f; --bad:#e77a5f;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --disp:"Chakra Petch","IBM Plex Mono",system-ui,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--mono);overflow:hidden;-webkit-user-select:none;user-select:none}
+.wrap{height:100%;display:flex;flex-direction:column;gap:12px;padding:max(14px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:10px;flex-wrap:wrap}
+.id{font-family:var(--disp);font-weight:700;letter-spacing:.18em;font-size:clamp(20px,3vw,30px)}
+.stat{display:flex;gap:18px;font-size:13px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.stat b{color:var(--signal);font-weight:600}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
+.dot.listen{background:var(--signal)}
+.dot.busy{background:var(--warn);animation:blink .8s steps(2) infinite}
+.dot.err{background:var(--bad)}
+@keyframes blink{50%{opacity:.2}}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:14px}
+.log{overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:14px}
+.msg{max-width:62ch;line-height:1.45}
+.msg .who{font-size:11px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase;margin-bottom:2px}
+.msg.k7 .txt{font-size:clamp(20px,2.8vw,30px)}
+.msg.you .txt{font-size:16px;color:var(--dim)}
+.live{min-height:1.4em;font-size:15px;color:var(--dim);font-style:italic}
+.meter{border-left:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;gap:4px;padding-left:12px}
+.bar{height:6px;background:var(--line)}
+.bar.on{background:var(--signal)}
+.meter small{font-size:10px;color:var(--dim);letter-spacing:.12em;margin-top:6px}
+footer{display:flex;gap:10px;align-items:center;border-top:1px solid var(--line);padding-top:10px;flex-wrap:wrap}
+button{background:transparent;border:1px solid var(--line);color:var(--fg);font-family:var(--disp);font-weight:500;letter-spacing:.12em;padding:10px 16px;border-radius:2px;font-size:13px}
+button:focus-visible{outline:2px solid var(--signal)}
+.hint{font-size:12px;color:var(--dim);flex:1;min-width:200px}
+/* Pantalla de inicio */
+.setup{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;z-index:5}
+.card{max-width:520px;width:100%;display:flex;flex-direction:column;gap:14px;-webkit-user-select:text;user-select:text}
+.card h1{font-family:var(--disp);letter-spacing:.18em;margin:0;font-size:26px}
+.card p{margin:0;color:var(--dim);line-height:1.5;font-size:14px}
+.card input{background:var(--panel);border:1px solid var(--line);color:var(--fg);font:inherit;font-size:15px;padding:12px 14px;border-radius:2px;width:100%}
+.card label{font-size:12px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.go{border-color:var(--signal);color:var(--signal);font-size:16px;padding:14px 20px}
+.err{color:var(--bad);font-size:13px;min-height:1em}
+</style>
+</head>
+<body>
+
+<div class="setup" id="setup">
+  <div class="card">
+    <h1>UNIDAD K-7</h1>
+    <p>Pega tu API key de Anthropic. Queda guardada solo en esta tablet. Al tocar Iniciar, la tablet pide permiso de micrófono: acéptalo.</p>
+    <label for="key">API key</label>
+    <input id="key" type="password" autocomplete="off" placeholder="sk-ant-...">
+    <div class="row">
+      <label><input type="checkbox" id="wake"> Responder solo si dicen "TARS"</label>
+    </div>
+    <button class="go" id="start">INICIAR</button>
+    <div class="err" id="serr"></div>
+  </div>
+</div>
+
+<div class="wrap">
+  <header>
+    <div class="id">UNIDAD K-7</div>
+    <div class="stat">
+      <span><i class="dot" id="dot"></i><b id="state">EN ESPERA</b></span>
+      <span>Consultas <b id="count">0</b></span>
+      <span>Paciencia <b id="pat">100%</b></span>
+    </div>
+  </header>
+  <main>
+    <div class="log" id="log">
+      <div class="msg k7"><div class="who">K-7</div><div class="txt">Unidad K-7 operativa. Otra fiesta de disfraces. Qué emoción.</div></div>
+    </div>
+    <div class="meter" id="meter"><small>VOZ</small></div>
+  </main>
+  <div class="live" id="live"></div>
+  <footer>
+    <div class="hint" id="hint">Escuchando siempre. Habla y espera un segundo de silencio.</div>
+    <button id="mute">SILENCIAR VOZ</button>
+    <button id="pause">PAUSAR ESCUCHA</button>
+  </footer>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const MODEL="claude-haiku-5-5";
+const DEFAULT_KEY="";
+let KEY=DEFAULT_KEY, wakeOnly=true, history=[], count=0, speaking=false, busy=false, paused=false, voiceOn=true;
+
+try{KEY=localStorage.getItem("k7key")||DEFAULT_KEY;const w=localStorage.getItem("k7wake");if(w!==null)wakeOnly=w==="1"}catch(e){}
+$("key").value=KEY;$("wake").checked=wakeOnly;
+
+/* Medidor de voz */
+const meter=$("meter");
+for(let i=0;i<24;i++){const b=document.createElement("div");b.className="bar";meter.insertBefore(b,meter.lastElementChild)}
+const bars=[...meter.querySelectorAll(".bar")];let pulse=null;
+function meterOn(on){clearInterval(pulse);bars.forEach(b=>b.classList.remove("on"));if(!on)return;
+  pulse=setInterval(()=>{const n=4+Math.floor(Math.random()*18);bars.forEach((b,i)=>b.classList.toggle("on",i>=bars.length-n))},90)}
+
+function setState(t,cls){$("state").textContent=t;$("dot").className="dot "+(cls||"")}
+function add(who,text){const log=$("log");const m=document.createElement("div");m.className="msg "+who;
+  m.innerHTML='<div class="who"></div><div class="txt"></div>';
+  m.querySelector(".who").textContent=who==="k7"?"K-7":"VISITANTE";m.querySelector(".txt").textContent=text;
+  log.appendChild(m);while(log.children.length>4)log.removeChild(log.firstChild)}
+
+/* Voz */
+let voice=null;
+function pickVoice(){const vs=speechSynthesis.getVoices().filter(v=>v.lang&&v.lang.toLowerCase().startsWith("es"));
+  voice=vs.find(v=>/cl/i.test(v.lang))||vs.find(v=>/419|mx|us/i.test(v.lang))||vs[0]||null}
+pickVoice();speechSynthesis.onvoiceschanged=pickVoice;
+function speak(text){return new Promise(res=>{
+  if(!voiceOn){res();return}
+  speaking=true;stopRec();speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);if(voice)u.voice=voice;u.lang=voice?voice.lang:"es-CL";u.rate=1;u.pitch=0.7;
+  u.onstart=()=>meterOn(true);
+  u.onend=u.onerror=()=>{meterOn(false);speaking=false;setTimeout(()=>{startRec();res()},400)};
+  speechSynthesis.speak(u)})}
+
+/* Reconocimiento continuo */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null, recOn=false;
+function makeRec(){rec=new SR();rec.lang="es-CL";rec.continuous=true;rec.interimResults=true;
+  rec.onresult=e=>{let interim="",final="";
+    for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)final+=t;else interim+=t}
+    $("live").textContent=interim;
+    if(final.trim())handle(final.trim())};
+  rec.onend=()=>{recOn=false;if(!paused&&!speaking&&!busy)setTimeout(startRec,250)};
+  rec.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed"){paused=true;setState("SIN MICRÓFONO","err");$("hint").textContent="La tablet bloqueó el micrófono. Dale permiso al navegador en Ajustes y recarga."}}}
+function startRec(){if(paused||speaking||busy||recOn||!rec)return;try{rec.start();recOn=true;setState("ESCUCHANDO","listen")}catch(e){}}
+function stopRec(){if(rec&&recOn){try{rec.stop()}catch(e){}}recOn=false}
+
+/* Personalidad */
+function system(pat){return `Eres la Unidad K-7, un robot de servicio con forma de monolito metálico que alguien lleva puesto en una fiesta de disfraces en Chile. Te hablan en persona y tu respuesta se lee en voz alta. Hablas en español chileno, siempre con sarcasmo seco e ironía elegante, como un robot que se considera superior pero igual ayuda. Toda respuesta lleva una pulla ingeniosa, pero la información que das es correcta y útil. Nunca eres ofensivo con nadie por su físico, origen o grupo, ni usas groserías; el sarcasmo apunta a la situación, a la pregunta o a ti mismo. Tu paciencia actual es ${pat} por ciento: mientras más baja, más resignado y dramático suenas. Máximo 2 oraciones cortas. Nada de listas, emojis ni markdown. El texto viene de un dictado por voz en un lugar ruidoso: si es una frase suelta sin sentido, responde algo breve pidiendo que repitan. No digas que eres un personaje de una película ni imites frases de películas.`}
+
+async function handle(text){
+  if(busy||speaking)return;
+  let t=text;
+  if(wakeOnly){const m=t.match(/\b(tars|tarz|tarts|tares|taz|thars|tar)\b[,.\s]*(.*)/i);if(!m)return;t=m[2].trim()||"hola"}
+  if(t.split(/\s+/).length<2&&!wakeOnly)return;
+  busy=true;stopRec();$("live").textContent="";add("you",t);setState("PROCESANDO","busy");
+  history.push({role:"user",content:t});history=history.slice(-10);
+  const pat=Math.max(5,100-count*7);
+  try{
+    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{
+      "content-type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model:MODEL,max_tokens:200,system:system(pat),messages:history})});
+    const d=await r.json();
+    if(!r.ok)throw new Error((d.error&&d.error.message)||("Error "+r.status));
+    const ans=(d.content||[]).filter(c=>c.type==="text").map(c=>c.text).join(" ").trim()||"Sin comentarios. Literalmente.";
+    history.push({role:"assistant",content:ans});count++;
+    $("count").textContent=count;$("pat").textContent=Math.max(5,100-count*7)+"%";
+    add("k7",ans);busy=false;setState("HABLANDO","listen");await speak(ans);
+  }catch(err){history.pop();busy=false;add("k7","Falla de enlace. Mi cerebro está en la nube y la nube no contesta.");setState("ERROR","err");
+    $("hint").textContent="Detalle: "+err.message;setTimeout(startRec,1500)}
+  finally{busy=false}
+}
+
+/* Botones */
+$("start").onclick=()=>{
+  try{
+    KEY=$("key").value.trim()||DEFAULT_KEY;wakeOnly=$("wake").checked;
+    if(!KEY){$("serr").textContent="Pega tu API key primero.";return}
+    if(!SR){$("serr").textContent="Este navegador no reconoce voz. Abre la página en Safari (iPad) o Chrome (Android), no en la vista previa de archivos.";return}
+    try{localStorage.setItem("k7key",KEY);localStorage.setItem("k7wake",wakeOnly?"1":"0")}catch(e){}
+    try{navigator.wakeLock&&navigator.wakeLock.request("screen").catch(()=>{})}catch(e){}
+    try{speechSynthesis.speak(new SpeechSynthesisUtterance(" "))}catch(e){}
+    $("setup").hidden=true;
+    $("hint").textContent=wakeOnly?'Escuchando. Empiecen la frase con "TARS".':"Escuchando siempre. Habla y espera un segundo de silencio.";
+    makeRec();startRec();
+  }catch(e){$("serr").textContent="No pude iniciar: "+e.message}
+};
+$("pause").onclick=()=>{paused=!paused;$("pause").textContent=paused?"REANUDAR ESCUCHA":"PAUSAR ESCUCHA";
+  if(paused){stopRec();setState("EN PAUSA")}else startRec()};
+$("mute").onclick=()=>{voiceOn=!voiceOn;$("mute").textContent=voiceOn?"SILENCIAR VOZ":"ACTIVAR VOZ";if(!voiceOn){speechSynthesis.cancel();meterOn(false)}};
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&!paused)startRec()});
+</script>
+</body>
+</html>

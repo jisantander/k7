@@ -95,6 +95,7 @@ button:focus-visible{outline:2px solid var(--signal)}
 
 <script>
 const $=id=>document.getElementById(id);
+const WAKE=/(?:^|[\s,.!?¿¡])(?:(?:oye|oiga|hey|hei|ey|hola|ola|ok|okay|ya|a ver)[\s,]+)?(?:s?t[aá]r(?:s|se|ses|z|ts|es|ss|t)?|thars?|taz|tarzan|tarsa)(?=$|[\s,.!?:;])[\s,.!?:;]*(.*)$/i;
 const MODEL="claude-haiku-5-5";
 const DEFAULT_KEY="";
 let KEY=DEFAULT_KEY, wakeOnly=true, history=[], count=0, speaking=false, busy=false, paused=false, voiceOn=true;
@@ -147,7 +148,7 @@ function system(pat){return `Eres la Unidad K-7, un robot de servicio con forma 
 async function handle(text){
   if(busy||speaking)return;
   let t=text;
-  if(wakeOnly){const m=t.match(/\b(tars|tarz|tarts|tares|taz|thars|tar)\b[,.\s]*(.*)/i);if(!m)return;t=m[2].trim()||"hola"}
+  if(wakeOnly){const m=t.match(WAKE);if(!m)return;t=m[1].trim()||"hola"}
   if(t.split(/\s+/).length<2&&!wakeOnly)return;
   busy=true;stopRec();$("live").textContent="";add("you",t);setState("PROCESANDO","busy");
   history.push({role:"user",content:t});history=history.slice(-10);

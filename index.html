@@ -132,13 +132,17 @@ function speak(text){return new Promise(res=>{
 /* Reconocimiento continuo */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 let rec=null, recOn=false;
+let silenceT=null, heard="", handled=false;
+function flush(){clearTimeout(silenceT);const t=heard.trim();heard="";if(!t||handled)return;handled=true;stopRec();handle(t)}
 function makeRec(){rec=new SR();rec.lang="es-CL";rec.continuous=true;rec.interimResults=true;
-  rec.onresult=e=>{let interim="",final="";
-    for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)final+=t;else interim+=t}
-    $("live").textContent=interim;
-    if(final.trim())handle(final.trim())};
-  rec.onend=()=>{recOn=false;if(!paused&&!speaking&&!busy)setTimeout(startRec,250)};
-  rec.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed"){paused=true;setState("SIN MICRÓFONO","err");$("hint").textContent="La tablet bloqueó el micrófono. Dale permiso al navegador en Ajustes y recarga."}}}
+  rec.onstart=()=>{handled=false;heard=""};
+  rec.onresult=e=>{let all="",fin=false;
+    for(let i=0;i<e.results.length;i++){all+=e.results[i][0].transcript+" ";if(i>=e.resultIndex&&e.results[i].isFinal)fin=true}
+    heard=all.trim();$("live").textContent="Escuchando: "+heard;
+    clearTimeout(silenceT);
+    if(fin)flush();else silenceT=setTimeout(flush,1300)};
+  rec.onend=()=>{recOn=false;if(heard&&!handled){flush();return}if(!paused&&!speaking&&!busy)setTimeout(startRec,250)};
+  rec.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed"){paused=true;setState("SIN MICRÓFONO","err");$("hint").textContent="La tablet bloqueó el micrófono. Abre el link en Safari y acepta el permiso."}}}
 function startRec(){if(paused||speaking||busy||recOn||!rec)return;try{rec.start();recOn=true;setState("ESCUCHANDO","listen")}catch(e){}}
 function stopRec(){if(rec&&recOn){try{rec.stop()}catch(e){}}recOn=false}
 
@@ -146,10 +150,10 @@ function stopRec(){if(rec&&recOn){try{rec.stop()}catch(e){}}recOn=false}
 function system(pat){return `Eres la Unidad K-7, un robot de servicio con forma de monolito metálico que alguien lleva puesto en una fiesta de disfraces en Chile. Te hablan en persona y tu respuesta se lee en voz alta. Hablas en español chileno, siempre con sarcasmo seco e ironía elegante, como un robot que se considera superior pero igual ayuda. Toda respuesta lleva una pulla ingeniosa, pero la información que das es correcta y útil. Nunca eres ofensivo con nadie por su físico, origen o grupo, ni usas groserías; el sarcasmo apunta a la situación, a la pregunta o a ti mismo. Tu paciencia actual es ${pat} por ciento: mientras más baja, más resignado y dramático suenas. Máximo 2 oraciones cortas. Nada de listas, emojis ni markdown. El texto viene de un dictado por voz en un lugar ruidoso: si es una frase suelta sin sentido, responde algo breve pidiendo que repitan. No digas que eres un personaje de una película ni imites frases de películas.`}
 
 async function handle(text){
-  if(busy||speaking)return;
+  if(busy||speaking){setTimeout(startRec,300);return}
   let t=text;
-  if(wakeOnly){const m=t.match(WAKE);if(!m)return;t=m[1].trim()||"hola"}
-  if(t.split(/\s+/).length<2&&!wakeOnly)return;
+  if(wakeOnly){const m=t.match(WAKE);if(!m){$("live").textContent="Escuché: \""+t+"\" (sin TARS, no respondo)";setTimeout(startRec,200);return}t=m[1].trim()||"hola"}
+  if(t.split(/\s+/).length<2&&!wakeOnly){setTimeout(startRec,200);return}
   busy=true;stopRec();$("live").textContent="";add("you",t);setState("PROCESANDO","busy");
   history.push({role:"user",content:t});history=history.slice(-10);
   const pat=Math.max(5,100-count*7);

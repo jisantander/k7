@@ -59,12 +59,17 @@ button:focus-visible{outline:2px solid var(--signal)}
 <div class="setup" id="setup">
   <div class="card">
     <h1>UNIDAD K-7</h1>
-    <p>Pega tu API key de Anthropic. Queda guardada solo en esta tablet. Al tocar Iniciar, la tablet pide permiso de micrófono: acéptalo.</p>
+    <p>Pega tus claves. Quedan guardadas solo en esta tablet. Al tocar Iniciar, la tablet pide permiso de micrófono: acéptalo.</p>
     <label for="key">API key</label>
     <input id="key" type="password" autocomplete="off" placeholder="sk-ant-...">
-    <div class="row">
-      <label><input type="checkbox" id="wake"> Responder solo si dicen "TARS"</label>
-    </div>
+    <label for="xikey">API key de ElevenLabs (para la voz)</label>
+    <input id="xikey" type="password" autocomplete="off" placeholder="sk_...">
+    <label for="vsel">Voz</label>
+    <select id="vsel" style="background:var(--panel);border:1px solid var(--line);color:var(--fg);font:inherit;font-size:15px;padding:12px 14px;border-radius:2px">
+      <option value="N6aRe3hk1YqaHDtQpTAH">Grave y calmada (Juanma)</option>
+      <option value="OLmSqlYzB06EIKJRy5b0">Profunda y dramática (Murdock)</option>
+      <option value="GLTzATUtINGy37b1y7gn">Grave, español neutro (Benji)</option>
+    </select>
     <button class="go" id="start">INICIAR</button>
     <div class="err" id="serr"></div>
   </div>
@@ -98,10 +103,10 @@ const $=id=>document.getElementById(id);
 const WAKE=/(?:^|[\s,.!?¿¡])(?:(?:oye|oiga|hey|hei|ey|hola|ola|ok|okay|ya|a ver)[\s,]+)?(?:s?t[aá]r(?:s|se|ses|z|ts|es|ss|t)?|thars?|taz|tarzan|tarsa)(?=$|[\s,.!?:;])[\s,.!?:;]*(.*)$/i;
 const MODEL="claude-haiku-5-5";
 const DEFAULT_KEY="";
-let KEY=DEFAULT_KEY, wakeOnly=true, history=[], count=0, speaking=false, busy=false, paused=false, voiceOn=true;
+let KEY=DEFAULT_KEY, XI="", VOICE="N6aRe3hk1YqaHDtQpTAH", wakeOnly=false, history=[], count=0, speaking=false, busy=false, paused=false, voiceOn=true;
 
-try{KEY=localStorage.getItem("k7key")||DEFAULT_KEY;const w=localStorage.getItem("k7wake");if(w!==null)wakeOnly=w==="1"}catch(e){}
-$("key").value=KEY;$("wake").checked=wakeOnly;
+try{KEY=localStorage.getItem("k7key")||DEFAULT_KEY;XI=localStorage.getItem("k7xi")||"";VOICE=localStorage.getItem("k7voice")||VOICE}catch(e){}
+$("key").value=KEY;$("xikey").value=XI;$("vsel").value=VOICE;
 
 /* Medidor de voz */
 const meter=$("meter");
@@ -121,13 +126,26 @@ let voice=null;
 function pickVoice(){const vs=speechSynthesis.getVoices().filter(v=>v.lang&&v.lang.toLowerCase().startsWith("es"));
   voice=vs.find(v=>/cl/i.test(v.lang))||vs.find(v=>/419|mx|us/i.test(v.lang))||vs[0]||null}
 pickVoice();speechSynthesis.onvoiceschanged=pickVoice;
-function speak(text){return new Promise(res=>{
-  if(!voiceOn){res();return}
-  speaking=true;stopRec();speechSynthesis.cancel();
+const player=new Audio();player.playsInline=true;
+function browserSpeak(text,res){
   const u=new SpeechSynthesisUtterance(text);if(voice)u.voice=voice;u.lang=voice?voice.lang:"es-CL";u.rate=1;u.pitch=0.7;
-  u.onstart=()=>meterOn(true);
-  u.onend=u.onerror=()=>{meterOn(false);speaking=false;setTimeout(()=>{startRec();res()},400)};
-  speechSynthesis.speak(u)})}
+  u.onstart=()=>meterOn(true);u.onend=u.onerror=()=>done(res);speechSynthesis.speak(u)}
+function done(res){meterOn(false);speaking=false;setTimeout(()=>{startRec();res()},400)}
+function speak(text){return new Promise(async res=>{
+  if(!voiceOn){res();setTimeout(startRec,300);return}
+  speaking=true;stopRec();try{speechSynthesis.cancel()}catch(e){}
+  if(!XI){browserSpeak(text,res);return}
+  try{
+    const r=await fetch("https://api.elevenlabs.io/v1/text-to-speech/"+VOICE+"?output_format=mp3_44100_128",{method:"POST",
+      headers:{"content-type":"application/json","xi-api-key":XI,"accept":"audio/mpeg"},
+      body:JSON.stringify({text,model_id:"eleven_flash_v2_5",voice_settings:{stability:0.8,similarity_boost:0.75,style:0,speed:0.95}})});
+    if(!r.ok)throw new Error("ElevenLabs "+r.status);
+    const url=URL.createObjectURL(await r.blob());
+    player.src=url;player.onplay=()=>meterOn(true);
+    player.onended=player.onerror=()=>{URL.revokeObjectURL(url);done(res)};
+    await player.play();
+  }catch(e){$("hint").textContent="Voz de ElevenLabs falló ("+e.message+"). Uso la voz de la tablet.";browserSpeak(text,res)}
+})}
 
 /* Reconocimiento continuo */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -175,20 +193,21 @@ async function handle(text){
 /* Botones */
 $("start").onclick=()=>{
   try{
-    KEY=$("key").value.trim()||DEFAULT_KEY;wakeOnly=$("wake").checked;
+    KEY=$("key").value.trim()||DEFAULT_KEY;XI=$("xikey").value.trim();VOICE=$("vsel").value;wakeOnly=false;
     if(!KEY){$("serr").textContent="Pega tu API key primero.";return}
     if(!SR){$("serr").textContent="Este navegador no reconoce voz. Abre la página en Safari (iPad) o Chrome (Android), no en la vista previa de archivos.";return}
-    try{localStorage.setItem("k7key",KEY);localStorage.setItem("k7wake",wakeOnly?"1":"0")}catch(e){}
+    try{localStorage.setItem("k7key",KEY);localStorage.setItem("k7xi",XI);localStorage.setItem("k7voice",VOICE)}catch(e){}
+    try{player.src="data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQxAADB8AhSmxhIIEVCSiJrDCQBTcu3UrAIwUdkRgQbFAZC1CQEwTJ9mjRvBA4UOLD8nKVOWfh+UlK3z/177OXrfOdKl7pyn3Xf//WreyTRUoAWgBgkOAGbZHBgG1OF6zM82DWbZaUmMBptgQhGjsyYqc9ae9XFz280948NMBWInljyzsNRFLPWdnZGWrddDsjK1unuSrVN9jJsK8KuQtQCtMBjCEtImISdNKJOopIpBFpNSMbIHCSRpRR5iakjTiyzLhchUUBwCgyKiweBv/7UsQbg8isVNoMPMjAAAA0gAAABEVFGmgqK////9bP/6XCykxBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";player.play().catch(()=>{})}catch(e){}
     try{navigator.wakeLock&&navigator.wakeLock.request("screen").catch(()=>{})}catch(e){}
     try{speechSynthesis.speak(new SpeechSynthesisUtterance(" "))}catch(e){}
     $("setup").hidden=true;
-    $("hint").textContent=wakeOnly?'Escuchando. Empiecen la frase con "TARS".':"Escuchando siempre. Habla y espera un segundo de silencio.";
+    $("hint").textContent="Escuchando siempre. Habla y espera un segundo de silencio.";
     makeRec();startRec();
   }catch(e){$("serr").textContent="No pude iniciar: "+e.message}
 };
 $("pause").onclick=()=>{paused=!paused;$("pause").textContent=paused?"REANUDAR ESCUCHA":"PAUSAR ESCUCHA";
   if(paused){stopRec();setState("EN PAUSA")}else startRec()};
-$("mute").onclick=()=>{voiceOn=!voiceOn;$("mute").textContent=voiceOn?"SILENCIAR VOZ":"ACTIVAR VOZ";if(!voiceOn){speechSynthesis.cancel();meterOn(false)}};
+$("mute").onclick=()=>{voiceOn=!voiceOn;$("mute").textContent=voiceOn?"SILENCIAR VOZ":"ACTIVAR VOZ";if(!voiceOn){try{speechSynthesis.cancel();player.pause()}catch(e){};meterOn(false)}};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&!paused)startRec()});
 </script>
 </body>

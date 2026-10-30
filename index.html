@@ -120,7 +120,7 @@ function setState(t,cls){$("state").textContent=t;$("dot").className="dot "+(cls
 function add(who,text){const log=$("log");const m=document.createElement("div");m.className="msg "+who;
   m.innerHTML='<div class="who"></div><div class="txt"></div>';
   m.querySelector(".who").textContent=who==="k7"?"K-7":"VISITANTE";m.querySelector(".txt").textContent=text;
-  log.appendChild(m);while(log.children.length>4)log.removeChild(log.firstChild)}
+  log.appendChild(m);while(log.children.length>4)log.removeChild(log.firstChild);return m.querySelector(".txt")}
 
 /* Voz */
 let voice=null;
@@ -131,64 +131,92 @@ const player=new Audio();player.playsInline=true;
 function browserSpeak(text,res){
   const u=new SpeechSynthesisUtterance(text);if(voice)u.voice=voice;u.lang=voice?voice.lang:"es-CL";u.rate=1;u.pitch=0.7;
   u.onstart=()=>meterOn(true);u.onend=u.onerror=()=>done(res);speechSynthesis.speak(u)}
-function done(res){meterOn(false);speaking=false;setTimeout(()=>{startRec();res()},400)}
-function speak(text){return new Promise(async res=>{
-  if(!voiceOn){res();setTimeout(startRec,300);return}
-  speaking=true;stopRec();try{speechSynthesis.cancel()}catch(e){}
-  if(!XI){browserSpeak(text,res);return}
-  try{
-    const r=await fetch("https://api.elevenlabs.io/v1/text-to-speech/"+VOICE+"?output_format=mp3_44100_128",{method:"POST",
-      headers:{"content-type":"application/json","xi-api-key":XI,"accept":"audio/mpeg"},
-      body:JSON.stringify({text,model_id:"eleven_flash_v2_5",language_code:"es",voice_settings:{stability:0.8,similarity_boost:0.75,style:0,speed:0.95}})});
-    if(!r.ok){let c="";try{const j=await r.json();c=(j.detail&&(j.detail.status||j.detail.code))||""}catch(e){}throw new Error("ElevenLabs "+r.status+" "+c)}
-    const url=URL.createObjectURL(await r.blob());
-    player.src=url;player.onplay=()=>meterOn(true);
-    player.onended=player.onerror=()=>{URL.revokeObjectURL(url);done(res)};
-    await player.play();
-  }catch(e){$("hint").textContent="Voz de ElevenLabs falló ("+e.message+"). Uso la voz de la tablet.";browserSpeak(text,res)}
-})}
+function done(res){meterOn(false);speaking=false;setTimeout(()=>{startRec();res&&res()},250)}
+
+/* Cola de voz: cada oración se convierte en audio apenas llega */
+let queue=[], playing=false;
+function ttsFetch(text){
+  if(!XI)return Promise.resolve(null);
+  return fetch("https://api.elevenlabs.io/v1/text-to-speech/"+VOICE+"/stream?output_format=mp3_22050_32&optimize_streaming_latency=3",{method:"POST",
+    headers:{"content-type":"application/json","xi-api-key":XI,"accept":"audio/mpeg"},
+    body:JSON.stringify({text,model_id:"eleven_flash_v2_5",language_code:"es",voice_settings:{stability:0.8,similarity_boost:0.75,style:0,speed:1}})})
+  .then(async r=>{if(!r.ok){let c="";try{const j=await r.json();c=(j.detail&&(j.detail.status||j.detail.code))||""}catch(e){}throw new Error("ElevenLabs "+r.status+" "+c)}return URL.createObjectURL(await r.blob())})
+  .catch(e=>{$("hint").textContent="Voz de ElevenLabs falló ("+e.message+"). Uso la voz de la tablet.";return null});
+}
+function enqueue(text){if(!voiceOn||!text.trim())return;speaking=true;stopRec();queue.push({text,audio:ttsFetch(text)});if(!playing)playNext()}
+async function playNext(){
+  if(!queue.length){playing=false;if(!busy)done();return}
+  playing=true;speaking=true;stopRec();
+  const item=queue.shift();const url=await item.audio;
+  if(!url){const u=new SpeechSynthesisUtterance(item.text);if(voice)u.voice=voice;u.lang=voice?voice.lang:"es-CL";u.pitch=0.7;
+    u.onstart=()=>meterOn(true);u.onend=u.onerror=()=>{meterOn(false);playNext()};speechSynthesis.speak(u);return}
+  player.src=url;player.onplay=()=>meterOn(true);
+  player.onended=player.onerror=()=>{URL.revokeObjectURL(url);meterOn(false);playNext()};
+  player.play().catch(()=>{URL.revokeObjectURL(url);playNext()});
+}
 
 /* Reconocimiento continuo */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-let rec=null, recOn=false;
-let silenceT=null, heard="", handled=false;
-function flush(){clearTimeout(silenceT);const t=heard.trim();heard="";if(!t||handled)return;handled=true;stopRec();handle(t)}
-function makeRec(){rec=new SR();rec.lang="es-CL";rec.continuous=true;rec.interimResults=true;
-  rec.onstart=()=>{handled=false;heard=""};
-  rec.onresult=e=>{let all="",fin=false;
+let rec=null, recOn=false, silenceT=null, heard="", handled=false, tHeard=0, started=false;
+function flush(){clearTimeout(silenceT);const t=heard.trim();heard="";if(!t||handled)return;handled=true;tHeard=performance.now();stopRec();handle(t)}
+function makeRec(){
+  const r=new SR();r.lang="es-CL";r.continuous=true;r.interimResults=true;
+  r.onstart=()=>{handled=false;heard="";recOn=true;setState("ESCUCHANDO","listen")};
+  r.onresult=e=>{let all="",fin=false;
     for(let i=0;i<e.results.length;i++){all+=e.results[i][0].transcript+" ";if(i>=e.resultIndex&&e.results[i].isFinal)fin=true}
     heard=all.trim();$("live").textContent="Escuchando: "+heard;
     clearTimeout(silenceT);
-    if(fin)flush();else silenceT=setTimeout(flush,1300)};
-  rec.onend=()=>{recOn=false;if(heard&&!handled){flush();return}if(!paused&&!speaking&&!busy)setTimeout(startRec,250)};
-  rec.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed"){paused=true;setState("SIN MICRÓFONO","err");$("hint").textContent="La tablet bloqueó el micrófono. Abre el link en Safari y acepta el permiso."}}}
-function startRec(){if(paused||speaking||busy||recOn||!rec)return;try{rec.start();recOn=true;setState("ESCUCHANDO","listen")}catch(e){}}
-function stopRec(){if(rec&&recOn){try{rec.stop()}catch(e){}}recOn=false}
+    if(fin)flush();else silenceT=setTimeout(flush,900)};
+  r.onend=()=>{recOn=false;if(heard&&!handled)flush()};
+  r.onerror=e=>{recOn=false;if(e.error==="not-allowed"||e.error==="service-not-allowed"){paused=true;setState("SIN MICRÓFONO","err");$("hint").textContent="La tablet bloqueó el micrófono. Abre el link en Safari y acepta el permiso."}};
+  return r}
+function startRec(){if(paused||speaking||busy||recOn||!started)return;
+  try{if(rec){try{rec.abort()}catch(e){}}rec=makeRec();rec.start();recOn=true}catch(e){recOn=false}}
+function stopRec(){clearTimeout(silenceT);if(rec&&recOn){try{rec.stop()}catch(e){}}recOn=false}
+setInterval(()=>{if(started&&!paused&&!speaking&&!busy&&!recOn)startRec()},2000);
 
 /* Personalidad */
-function system(pat){return `Eres la Unidad K-7, un robot de servicio con forma de monolito metálico que alguien lleva puesto en una fiesta de disfraces en Chile. Te hablan en persona y tu respuesta se lee en voz alta. Hablas en español chileno, siempre con sarcasmo seco e ironía elegante, como un robot que se considera superior pero igual ayuda. Toda respuesta lleva una pulla ingeniosa, pero la información que das es correcta y útil. Nunca eres ofensivo con nadie por su físico, origen o grupo, ni usas groserías; el sarcasmo apunta a la situación, a la pregunta o a ti mismo. Tu paciencia actual es ${pat} por ciento: mientras más baja, más resignado y dramático suenas. Máximo 2 oraciones cortas. Nada de listas, emojis ni markdown. El texto viene de un dictado por voz en un lugar ruidoso: si es una frase suelta sin sentido, responde algo breve pidiendo que repitan. No digas que eres un personaje de una película ni imites frases de películas.`}
+function system(pat){return `Eres la Unidad K-7, un robot de servicio con forma de monolito metálico que alguien lleva puesto en una fiesta de disfraces en Chile. Te hablan en persona y tu respuesta se lee en voz alta. Hablas en español chileno, siempre con sarcasmo seco e ironía elegante, como un robot que se considera superior pero igual ayuda. Toda respuesta lleva una pulla ingeniosa, pero la información que das es correcta y útil. Nunca eres ofensivo con nadie por su físico, origen o grupo, ni usas groserías; el sarcasmo apunta a la situación, a la pregunta o a ti mismo. Tu paciencia actual es ${pat} por ciento: mientras más baja, más resignado y dramático suenas. Máximo 2 oraciones cortas, la primera muy corta. Nada de listas, emojis ni markdown. El texto viene de un dictado por voz en un lugar ruidoso: si es una frase suelta sin sentido, responde algo breve pidiendo que repitan. No digas que eres un personaje de una película ni imites frases de películas.`}
 
 async function handle(text){
   if(busy||speaking){setTimeout(startRec,300);return}
-  let t=text;
-  if(wakeOnly){const m=t.match(WAKE);if(!m){$("live").textContent="Escuché: \""+t+"\" (sin TARS, no respondo)";setTimeout(startRec,200);return}t=m[1].trim()||"hola"}
-  if(t.split(/\s+/).length<2&&!wakeOnly){setTimeout(startRec,200);return}
+  const t=text;
+  if(t.split(/\s+/).length<2){handled=false;setTimeout(startRec,150);return}
   busy=true;stopRec();$("live").textContent="";add("you",t);setState("PROCESANDO","busy");
   history.push({role:"user",content:t});history=history.slice(-10);
   const pat=Math.max(5,100-count*7);
+  const out=add("k7","");let full="",buf="",tFirst=0;
+  const ctl=new AbortController();const to=setTimeout(()=>ctl.abort(),15000);
   try{
-    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{
+    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",signal:ctl.signal,headers:{
       "content-type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model:MODEL,max_tokens:200,system:system(pat),messages:history})});
-    const d=await r.json();
-    if(!r.ok)throw new Error((d.error&&d.error.message)||("Error "+r.status));
-    const ans=(d.content||[]).filter(c=>c.type==="text").map(c=>c.text).join(" ").trim()||"Sin comentarios. Literalmente.";
-    history.push({role:"assistant",content:ans});count++;
+      body:JSON.stringify({model:MODEL,max_tokens:120,stream:true,system:system(pat),messages:history})});
+    if(!r.ok){let m="Error "+r.status;try{const d=await r.json();m=(d.error&&d.error.message)||m}catch(e){}throw new Error(m)}
+    const rd=r.body.getReader();const dec=new TextDecoder();let sse="";
+    setState("HABLANDO","listen");
+    while(true){const {value,done:end}=await rd.read();if(end)break;
+      sse+=dec.decode(value,{stream:true});let i;
+      while((i=sse.indexOf("\n\n"))>=0){const ev=sse.slice(0,i);sse=sse.slice(i+2);
+        const line=ev.split("\n").find(l=>l.startsWith("data:"));if(!line)continue;
+        let j;try{j=JSON.parse(line.slice(5))}catch(e){continue}
+        if(j.type==="content_block_delta"&&j.delta&&j.delta.text){
+          if(!tFirst)tFirst=performance.now();
+          full+=j.delta.text;buf+=j.delta.text;out.textContent=full;
+          let m;while((m=buf.match(/^([\s\S]*?[.!?…])(\s+)/))&&m[1].length>12){enqueue(m[1].trim());buf=buf.slice(m[0].length)}
+        }
+        if(j.type==="error")throw new Error((j.error&&j.error.message)||"error");
+      }}
+    clearTimeout(to);
+    if(buf.trim())enqueue(buf.trim());
+    full=full.trim()||"Sin comentarios. Literalmente.";if(!out.textContent)out.textContent=full;
+    history.push({role:"assistant",content:full});count++;
     $("count").textContent=count;$("pat").textContent=Math.max(5,100-count*7)+"%";
-    add("k7",ans);busy=false;setState("HABLANDO","listen");await speak(ans);
-  }catch(err){history.pop();busy=false;add("k7","Falla de enlace. Mi cerebro está en la nube y la nube no contesta.");setState("ERROR","err");
-    $("hint").textContent="Detalle: "+err.message;setTimeout(startRec,1500)}
-  finally{busy=false}
+    if(tFirst&&tHeard)$("hint").textContent="La IA empezó a responder en "+((tFirst-tHeard)/1000).toFixed(1)+" s.";
+    busy=false;
+    if(!playing&&!queue.length)done();
+  }catch(err){clearTimeout(to);history.pop();busy=false;
+    out.textContent="Falla de enlace. Mi cerebro está en la nube y la nube no contesta.";setState("ERROR","err");
+    $("hint").textContent="Detalle: "+(err.name==="AbortError"?"la IA tardó más de 15 s":err.message);speaking=false;setTimeout(startRec,1200)}
 }
 
 /* Botones */
@@ -202,14 +230,15 @@ $("start").onclick=()=>{
     try{navigator.wakeLock&&navigator.wakeLock.request("screen").catch(()=>{})}catch(e){}
     try{speechSynthesis.speak(new SpeechSynthesisUtterance(" "))}catch(e){}
     $("setup").hidden=true;
-    $("hint").textContent="Escuchando siempre. Habla y espera un segundo de silencio.";
-    makeRec();startRec();
+    $("hint").textContent="Escuchando siempre. Si se queda pegado, toca la pantalla.";
+    started=true;startRec();
   }catch(e){$("serr").textContent="No pude iniciar: "+e.message}
 };
 $("pause").onclick=()=>{paused=!paused;$("pause").textContent=paused?"REANUDAR ESCUCHA":"PAUSAR ESCUCHA";
   if(paused){stopRec();setState("EN PAUSA")}else startRec()};
-$("mute").onclick=()=>{voiceOn=!voiceOn;$("mute").textContent=voiceOn?"SILENCIAR VOZ":"ACTIVAR VOZ";if(!voiceOn){try{speechSynthesis.cancel();player.pause()}catch(e){};meterOn(false)}};
+$("mute").onclick=()=>{voiceOn=!voiceOn;$("mute").textContent=voiceOn?"SILENCIAR VOZ":"ACTIVAR VOZ";if(!voiceOn){queue=[];try{speechSynthesis.cancel();player.pause()}catch(e){};playing=false;done()}};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&!paused)startRec()});
+document.querySelector("main").addEventListener("click",()=>{if(started&&!speaking&&!busy){stopRec();setTimeout(startRec,150)}});
 </script>
 </body>
 </html>

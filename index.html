@@ -66,9 +66,10 @@ button:focus-visible{outline:2px solid var(--signal)}
     <input id="xikey" type="password" autocomplete="off" placeholder="sk_...">
     <label for="vsel">Voz</label>
     <select id="vsel" style="background:var(--panel);border:1px solid var(--line);color:var(--fg);font:inherit;font-size:15px;padding:12px 14px;border-radius:2px">
-      <option value="N6aRe3hk1YqaHDtQpTAH">Grave y calmada (Juanma)</option>
-      <option value="OLmSqlYzB06EIKJRy5b0">Profunda y dramática (Murdock)</option>
-      <option value="GLTzATUtINGy37b1y7gn">Grave, español neutro (Benji)</option>
+      <option value="pNInz6obpgDQGcFmaJgB">Grave y firme (Adam)</option>
+      <option value="nPczCjzI2devNBz1zQrb">Grave y calmada (Brian)</option>
+      <option value="onwK4e9ZLuTAKqWW03F9">Seria, tipo locutor (Daniel)</option>
+      <option value="JBFqnCBsd6RMkjVDRZzb">Madura y cálida (George)</option>
     </select>
     <button class="go" id="start">INICIAR</button>
     <div class="err" id="serr"></div>
@@ -103,9 +104,9 @@ const $=id=>document.getElementById(id);
 const WAKE=/(?:^|[\s,.!?¿¡])(?:(?:oye|oiga|hey|hei|ey|hola|ola|ok|okay|ya|a ver)[\s,]+)?(?:s?t[aá]r(?:s|se|ses|z|ts|es|ss|t)?|thars?|taz|tarzan|tarsa)(?=$|[\s,.!?:;])[\s,.!?:;]*(.*)$/i;
 const MODEL="claude-haiku-5-5";
 const DEFAULT_KEY="";
-let KEY=DEFAULT_KEY, XI="", VOICE="N6aRe3hk1YqaHDtQpTAH", wakeOnly=false, history=[], count=0, speaking=false, busy=false, paused=false, voiceOn=true;
+let KEY=DEFAULT_KEY, XI="", VOICE="pNInz6obpgDQGcFmaJgB", wakeOnly=false, history=[], count=0, speaking=false, busy=false, paused=false, voiceOn=true;
 
-try{KEY=localStorage.getItem("k7key")||DEFAULT_KEY;XI=localStorage.getItem("k7xi")||"";VOICE=localStorage.getItem("k7voice")||VOICE}catch(e){}
+try{KEY=localStorage.getItem("k7key")||DEFAULT_KEY;XI=localStorage.getItem("k7xi")||"";const sv=localStorage.getItem("k7voice");if(sv&&["pNInz6obpgDQGcFmaJgB","nPczCjzI2devNBz1zQrb","onwK4e9ZLuTAKqWW03F9","JBFqnCBsd6RMkjVDRZzb"].includes(sv))VOICE=sv}catch(e){}
 $("key").value=KEY;$("xikey").value=XI;$("vsel").value=VOICE;
 
 /* Medidor de voz */
@@ -138,8 +139,8 @@ function speak(text){return new Promise(async res=>{
   try{
     const r=await fetch("https://api.elevenlabs.io/v1/text-to-speech/"+VOICE+"?output_format=mp3_44100_128",{method:"POST",
       headers:{"content-type":"application/json","xi-api-key":XI,"accept":"audio/mpeg"},
-      body:JSON.stringify({text,model_id:"eleven_flash_v2_5",voice_settings:{stability:0.8,similarity_boost:0.75,style:0,speed:0.95}})});
-    if(!r.ok)throw new Error("ElevenLabs "+r.status);
+      body:JSON.stringify({text,model_id:"eleven_flash_v2_5",language_code:"es",voice_settings:{stability:0.8,similarity_boost:0.75,style:0,speed:0.95}})});
+    if(!r.ok){let c="";try{const j=await r.json();c=(j.detail&&(j.detail.status||j.detail.code))||""}catch(e){}throw new Error("ElevenLabs "+r.status+" "+c)}
     const url=URL.createObjectURL(await r.blob());
     player.src=url;player.onplay=()=>meterOn(true);
     player.onended=player.onerror=()=>{URL.revokeObjectURL(url);done(res)};
